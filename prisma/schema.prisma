@@ -1,0 +1,207 @@
+// =====================================================
+// School Resource Booking System - Prisma schema
+// Stack: Next.js + Prisma + PostgreSQL
+// =====================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ---------------------- ENUMS ----------------------
+
+// Global role: ADMIN can create schools, USER cannot
+enum UserRole {
+  ADMIN
+  USER
+}
+
+// Role inside a specific school
+enum SchoolRole {
+  ADMIN
+  TEACHER
+}
+
+enum MemberStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum Shift {
+  MORNING
+  AFTERNOON
+  EVENING
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+// ---------------------- MODELS ----------------------
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String?  @map("password_hash")
+  role         UserRole @default(USER)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  ownedSchools School[]
+  memberships  SchoolMember[]
+  bookings     Booking[]
+  invitations  Invitation[]   @relation("InvitedBy")
+
+  @@map("users")
+}
+
+model School {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  ownerId   String   @map("owner_id")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  owner          User            @relation(fields: [ownerId], references: [id])
+  members        SchoolMember[]
+  categories     ItemCategory[]
+  items          Item[]
+  bookings       Booking[]
+  bookingItems   BookingItem[]
+  invitations    Invitation[]
+
+  @@index([ownerId])
+  @@map("schools")
+}
+
+// user_school: links users to schools and controls who can access/book
+model SchoolMember {
+  id        String       @id @default(cuid())
+  userId    String       @map("user_id")
+  schoolId  String       @map("school_id")
+  role      SchoolRole   @default(TEACHER)
+  status    MemberStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, schoolId])
+  @@index([schoolId])
+  @@map("school_members")
+}
+
+// Admin invites a teacher by e-mail; on accept, a SchoolMember is created
+model Invitation {
+  id          String           @id @default(cuid())
+  schoolId    String           @map("school_id")
+  email       String
+  role        SchoolRole       @default(TEACHER)
+  token       String           @unique
+  status      InvitationStatus @default(PENDING)
+  invitedById String           @map("invited_by_id")
+  expiresAt   DateTime         @map("expires_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  school    School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  invitedBy User   @relation("InvitedBy", fields: [invitedById], references: [id])
+
+  @@index([schoolId, email])
+  @@map("invitations")
+}
+
+model ItemCategory {
+  id        String   @id @default(cuid())
+  schoolId  String   @map("school_id")
+  name      String   // e.g. "Laboratory", "Projector", "Auditorium"
+  createdAt DateTime @default(now()) @map("created_at")
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  items  Item[]
+
+  @@unique([schoolId, name])
+  @@map("item_categories")
+}
+
+model Item {
+  id          String   @id @default(cuid())
+  schoolId    String   @map("school_id")
+  categoryId  String?  @map("category_id")
+  name        String   // e.g. "Computer Lab 1", "Projector 02"
+  description String? @db.Text
+  location    String?
+  capacity    Int?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  category     ItemCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  bookingItems BookingItem[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("items")
+}
+
+// A booking made by a teacher for one date + shift + period
+model Booking {
+  id        String        @id @default(cuid())
+  schoolId  String        @map("school_id")
+  userId    String        @map("user_id")
+  date      DateTime      @db.Date
+  shift     Shift
+  period    Int           // 1 to 7
+  status    BookingStatus @default(CONFIRMED)
+  notes     String?       @db.Text // e.g. class, subject, purpose
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  cancelledAt DateTime?   @map("cancelled_at")
+
+  school School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User          @relation(fields: [userId], references: [id])
+  items  BookingItem[]
+
+  @@index([schoolId, date, shift, period])
+  @@index([userId, date])
+  @@map("bookings")
+}
+
+// booking_items: which items are in each booking.
+// date/shift/period are copied from Booking so the database itself
+// prevents double booking of the same item in the same slot.
+// When a booking is cancelled, its rows here are deleted (Booking keeps the history).
+model BookingItem {
+  id        String   @id @default(cuid())
+  bookingId String   @map("booking_id")
+  itemId    String   @map("item_id")
+  schoolId  String   @map("school_id")
+  date      DateTime @db.Date
+  shift     Shift
+  period    Int
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  item    Item    @relation(fields: [itemId], references: [id])
+  school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, itemId])
+  @@unique([itemId, date, shift, period]) // anti double-booking
+  @@index([schoolId, date])
+  @@map("booking_items")
+}
