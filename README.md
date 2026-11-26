@@ -23,6 +23,13 @@ Todas as operações exigem sessão autenticada. O usuário que cria uma escola 
 
 Edição e exclusão exigem que o usuário seja administrador ativo da escola. Nomes repetidos retornam `409 Conflict`; uma sessão ausente retorna `401 Unauthorized`.
 
+## API de itens
+
+- `GET /api/items/{schoolId}` lista os itens da escola para membros ativos.
+- `POST /api/items/{schoolId}` cria um item e exige que o usuário seja administrador ativo da escola.
+
+O corpo do `POST` deve conter `name`; `description` é opcional. O `schoolId` é obtido da URL. A resposta de sucesso é `201 Created` com `{ "success": true, "item": ... }`. Nomes duplicados na mesma escola retornam `409 Conflict`.
+
 ## Desenvolvimento
 
 ```bash
